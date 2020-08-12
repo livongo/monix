@@ -2,9 +2,9 @@ name: build
 
 on:
   pull_request:
-    branches: ['*']
+    branches: ['series/*']
   push:
-    branches: ['*']
+    branches: ['series/*']
     tags: ["v[0-9]+*"]
 
 jobs:
@@ -18,7 +18,10 @@ jobs:
         # WARN: build.sbt depends on this key path, as scalaVersion and
         # crossScalaVersions is determined from it
         scala: [ 2.11.12, 2.12.12, 2.13.3 ]
-
+    
+    env:
+      CI: true
+    
     steps:
       - uses: actions/checkout@v2
       - uses: olafurpg/setup-scala@v7
@@ -70,6 +73,9 @@ jobs:
           - { java: 8, scala: 2.13.3, scalajs: 0.6.33 }
           - { java: 8, scala: 2.13.3, scalajs: 1.1.1 }
 
+    env:
+      CI: true
+    
     steps:
       - uses: actions/checkout@v2
       - uses: olafurpg/setup-scala@v7
@@ -197,30 +203,42 @@ jobs:
 
   publish:
     name: Publish to Sonatype
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/series/3.x')
     needs: [ jvm-tests, js-tests, mima, unidoc ]
     strategy:
-      fail-fast: true
-      max-parallel: 1
       matrix:
         scalajs: ["", 0.6.33, 1.1.1]
 
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/checkout@v1
-      - uses: olafurpg/setup-gpg@v2
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 100
+
       - uses: olafurpg/setup-scala@v2
         with:
           java-version: "adopt@1.8"
 
+      - name: Install GnuPG2
+        run: |
+          ./.github/scripts/setup-pgp
+        env:
+          PGP_SECRET: ${{ secrets.PGP_SECRET }}
+
       - name: SCALAJS_VERSION=${{ matrix.scalajs }} sbt ci-release
         run: |
-          echo "SCALAJS_VERSION=$SCALAJS_VERSION"
-          git fetch --tags
-          sbt clean ci-release
+          if [ "$AUTO_PUBLISH_SERIES_3X" = "true" ]; then
+            echo "SCALAJS_VERSION=$SCALAJS_VERSION"
+            git fetch --depth=100 origin +refs/tags/*:refs/tags/*
+            sbt ci-release
+          else
+            echo "Skipping due to AUTO_PUBLISH_SERIES_3X=false"
+          fi
         env:
+          PGP_KEY_HEX: ${{ secrets.PGP_KEY_HEX }}
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
-          PGP_SECRET: ${{ secrets.PGP_SECRET }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SCALAJS_VERSION: ${{ matrix.scalajs }}
+          PUBLISH_STABLE_VERSION: true
+          AUTO_PUBLISH_SERIES_3X: ${{ secrets.AUTO_PUBLISH_SERIES_3X }}
